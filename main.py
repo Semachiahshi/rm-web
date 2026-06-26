@@ -1,14 +1,18 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-import yt_dlp, tempfile, os
+import yt_dlp, tempfile, os, shutil
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+def cleanup(path: str):
+    shutil.rmtree(path, ignore_errors=True)
+
 @app.get("/download")
-async def download(q: str):
-    with tempfile.TemporaryDirectory() as tmp:
+async def download(q: str, background_tasks: BackgroundTasks):
+    tmp = tempfile.mkdtemp()
+    try:
         opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '0'}],
@@ -18,5 +22,11 @@ async def download(q: str):
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(q, download=True)
-            title = info.get('title', 'song')
-        return FileResponse(f"{tmp}/{title}.mp3", media_type='audio/mpeg', filename=f"{title}.mp3")
+        
+        mp3 = [f for f in os.listdir(tmp) if f.endswith('.mp3')][0]
+        mp3_path = os.path.join(tmp, mp3)
+        background_tasks.add_task(cleanup, tmp)
+        return FileResponse(mp3_path, media_type='audio/mpeg', filename=mp3)
+    except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
